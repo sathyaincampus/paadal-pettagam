@@ -76,6 +76,34 @@ Transliteration is rule-based and runs entirely on-device (`src/translit.js`, ze
 
 Inside Claude the app uses Claude's persistent `window.storage`. Everywhere else, a shim at the top of `App.jsx` transparently falls back to `localStorage` on the device. Use **Export backup** periodically — it downloads the whole collection as JSON.
 
+## Cross-device sync (free, via Firebase)
+
+Out of the box the hosted app saves songs per device (localStorage). To share **one live song list across every phone, tablet, and computer**, connect a free Firebase project (Spark plan: no credit card, 1 GB storage, 50K reads/day — a family song list uses a fraction of a percent):
+
+1. Go to [console.firebase.google.com](https://console.firebase.google.com) → **Add project** (any name, Analytics off is fine)
+2. Project overview → **</> Web app** → register → copy the `firebaseConfig` object
+3. Paste it into `src/firebase-config.js` (these values are public identifiers, safe to commit — security comes from the rules below)
+4. **Build → Firestore Database → Create database** (production mode, any region)
+5. **Build → Authentication → Sign-in method → enable Anonymous**
+6. **Firestore → Rules** → replace with the following → **Publish**:
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /families/{family} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
+```
+
+7. Rebuild and redeploy (`npm run build`, push `dist/` to `gh-pages`)
+
+On first open, the app asks each device for a **family code** — any secret phrase you invent. Every device that enters the same code shares the same live list: adds and edits appear on the other devices within a second, writes go through Firestore with last-write-wins, and each device keeps a localStorage copy as an offline cache. Treat the code like a password (that's what scopes your data). "Stop syncing on this device" in the footer returns a device to local-only.
+
+Until `firebase-config.js` is filled in, the app silently stays in device-only mode — nothing breaks.
+
 ## Docs
 
 - `docs/ARCHITECTURE.md` — component design, data model, storage, duplicate detection, and four Mermaid sequence diagrams (GitHub renders them natively).

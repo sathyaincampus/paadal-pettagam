@@ -1,6 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { SpeechRecognition } from "@capacitor-community/speech-recognition";
 import { transliterate } from "./translit.js";
+import {
+  SYNC_AVAILABLE,
+  startSync,
+  pushSongs,
+  fetchSongsOnce,
+  normalizeFamilyCode,
+} from "./sync.js";
 
 /* Running inside a Capacitor native shell (Android / iOS)? */
 const IS_NATIVE =
@@ -78,6 +85,13 @@ async function loadSongs() {
   }
 }
 
+function mergeSongs(local, remote) {
+  const map = new Map();
+  for (const s of local) map.set(s.id, s);
+  for (const s of remote) map.set(s.id, s); // remote wins on same id
+  return [...map.values()];
+}
+
 async function persistSongs(songs) {
   try {
     await window.storage.set(STORAGE_KEY, JSON.stringify(songs));
@@ -102,16 +116,52 @@ export default function CarnaticSongTracker() {
   const [pendingSong, setPendingSong] = useState(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
+  const [familyCode, setFamilyCode] = useState(() => {
+    try {
+      return localStorage.getItem("pp-family-code") || "";
+    } catch {
+      return "";
+    }
+  });
+  const [codeInput, setCodeInput] = useState("");
+  const [syncState, setSyncState] = useState("off"); // off|connecting|live|error
+  const [syncDismissed, setSyncDismissed] = useState(false);
+  const unsubRef = useRef(null);
   const [listening, setListening] = useState(false);
   const [voiceLang, setVoiceLang] = useState("ta-IN");
   const recogRef = useRef(null);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      setSongs(await loadSongs());
-      setLoading(false);
+      const local = await loadSongs();
+      if (!cancelled) {
+        setSongs(local);
+        setLoading(false);
+      }
+      if (SYNC_AVAILABLE && familyCode) {
+        setSyncState("connecting");
+        try {
+          unsubRef.current = await startSync(
+            familyCode,
+            (remote) => {
+              setSongs(remote);
+              persistSongs(remote); // offline cache
+              setSyncState("live");
+            },
+            () => setSyncState("error")
+          );
+        } catch (e) {
+          console.error(e);
+          setSyncState("error");
+        }
+      }
     })();
-  }, []);
+    return () => {
+      cancelled = true;
+      unsubRef.current?.();
+    };
+  }, [familyCode]);
 
   function notify(msg) {
     setToast(msg);
@@ -121,7 +171,51 @@ export default function CarnaticSongTracker() {
   async function commit(next) {
     setSongs(next);
     const ok = await persistSongs(next);
-    if (!ok) notify("Couldn't save — check your connection and try again.");
+    if (SYNC_AVAILABLE && familyCode) {
+      try {
+        await pushSongs(familyCode, next);
+      } catch (e) {
+        console.error(e);
+        notify("Saved on this device — sync will catch up when you're online.");
+      }
+    } else if (!ok) {
+      notify("Couldn't save — check your connection and try again.");
+    }
+  }
+
+  async function connectFamily() {
+    const code = normalizeFamilyCode(codeInput);
+    if (code.length < 4) {
+      notify("Use at least 4 characters — treat the code like a password.");
+      return;
+    }
+    setSyncState("connecting");
+    try {
+      const remote = await fetchSongsOnce(code);
+      const merged = mergeSongs(songs, remote);
+      await pushSongs(code, merged);
+      try {
+        localStorage.setItem("pp-family-code", code);
+      } catch {}
+      setCodeInput("");
+      setFamilyCode(code); // the effect opens the live subscription
+      notify("Synced — enter the same family code on every device.");
+    } catch (e) {
+      console.error(e);
+      setSyncState("error");
+      notify("Couldn't connect — check the Firebase setup steps in the README.");
+    }
+  }
+
+  function disconnectFamily() {
+    unsubRef.current?.();
+    unsubRef.current = null;
+    try {
+      localStorage.removeItem("pp-family-code");
+    } catch {}
+    setFamilyCode("");
+    setSyncState("off");
+    notify("This device is now local-only. Your songs stay saved here.");
   }
 
   /* ----- derived ----- */
@@ -418,6 +512,38 @@ export default function CarnaticSongTracker() {
         )}
       </section>
 
+      {/* ---------- sync setup ---------- */}
+      {SYNC_AVAILABLE && !familyCode && !syncDismissed && (
+        <section className="pp-sync-card">
+          <div className="pp-sync-title">Sync across all your devices</div>
+          <p className="pp-sync-text">
+            Invent a family code — any secret phrase — and enter the same code
+            on every phone, tablet, and computer. Everyone sees the same song
+            list, updated live.
+          </p>
+          <div className="pp-sync-row">
+            <input
+              value={codeInput}
+              onChange={(e) => setCodeInput(e.target.value)}
+              placeholder="e.g. our-secret-raga-2026"
+            />
+            <button
+              className="pp-btn pp-btn-primary"
+              onClick={connectFamily}
+              disabled={syncState === "connecting"}
+            >
+              {syncState === "connecting" ? "Connecting…" : "Start syncing"}
+            </button>
+          </div>
+          <button
+            className="pp-sync-skip"
+            onClick={() => setSyncDismissed(true)}
+          >
+            Not now — keep songs on this device only
+          </button>
+        </section>
+      )}
+
       {/* ---------- add / edit panel ---------- */}
       {panel && (
         <section className="pp-panel">
@@ -711,7 +837,20 @@ export default function CarnaticSongTracker() {
       {toast && <div className="pp-toast">{toast}</div>}
 
       <footer className="pp-footer">
-        Songs are saved automatically and remembered next time you open this.
+        {familyCode && syncState === "live" ? (
+          <>
+            Synced across devices as "{familyCode}" ·{" "}
+            <button className="pp-linkbtn" onClick={disconnectFamily}>
+              stop syncing on this device
+            </button>
+          </>
+        ) : familyCode && syncState === "connecting" ? (
+          "Connecting to your family's song list…"
+        ) : familyCode && syncState === "error" ? (
+          "Sync is unreachable — songs are saved on this device and will catch up."
+        ) : (
+          "Songs are saved automatically on this device."
+        )}
       </footer>
     </div>
   );
@@ -879,6 +1018,28 @@ const css = `
 }
 .pp-footer {
   text-align: center; font-size: 12px; color: #9A7A5E; margin-top: 26px;
+}
+.pp-sync-card {
+  background: #EDF3F0; border: 1px solid #BFD6CF; border-radius: 14px;
+  padding: 14px 16px; margin-bottom: 16px;
+}
+.pp-sync-title {
+  font-family: "Iowan Old Style", Palatino, Georgia, serif;
+  font-size: 17px; font-weight: 700; color: var(--teal);
+}
+.pp-sync-text { font-size: 13.5px; margin: 4px 0 10px; color: #2E4F49; }
+.pp-sync-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.pp-sync-row input {
+  flex: 1 1 200px; padding: 10px 12px; border-radius: 9px;
+  border: 1px solid #BFD6CF; background: #FFFFFF; font-size: 15px;
+}
+.pp-sync-skip {
+  background: none; border: none; padding: 6px 0 0; cursor: pointer;
+  font-size: 12.5px; color: #55706A; text-decoration: underline;
+}
+.pp-linkbtn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-size: 12px; color: #9A7A5E; text-decoration: underline;
 }
 .pp-voice-row { display: flex; gap: 6px; align-items: stretch; }
 .pp-voice-row input { flex: 1 1 auto; min-width: 0; }
