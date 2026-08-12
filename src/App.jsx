@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { SpeechRecognition } from "@capacitor-community/speech-recognition";
+import { transliterate } from "./translit.js";
 
 /* Running inside a Capacitor native shell (Android / iOS)? */
 const IS_NATIVE =
@@ -21,11 +22,6 @@ if (typeof window !== "undefined" && !window.storage) {
   };
 }
 
-/* Transliteration endpoint. Inside Claude this Anthropic URL works directly.
-   For a store build, point this at YOUR proxy server that holds the API key
-   (never ship the key in the app). Leave as-is to skip AI transliteration
-   natively — songs still save; type the transliteration manually. */
-const TRANSLIT_ENDPOINT = "https://api.anthropic.com/v1/messages";
 
 /* ------------------------------------------------------------------ */
 /*  Paadal Pettagam — Carnatic Song Notebook                           */
@@ -90,32 +86,6 @@ async function persistSongs(songs) {
     console.error("Storage error:", e);
     return false;
   }
-}
-
-// Ask Claude to transliterate the original-script name into Latin letters.
-async function aiTransliterate(text) {
-  const prompt = `You are helping catalog Carnatic music songs. Transliterate the following song name / first line into Latin (English) letters using the conventional Carnatic romanization style (e.g. "வாதாபி கணபதிம்" -> "Vatapi Ganapatim"). Do NOT translate the meaning — transliterate the sounds only. Also identify the language of the script.
-
-Respond ONLY with minified JSON, no markdown fences, in exactly this shape:
-{"transliteration":"...","language":"..."}
-
-Text: ${text}`;
-  const response = await fetch(TRANSLIT_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1000,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await response.json();
-  const text0 = (data.content || [])
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
-  const clean = text0.replace(/```json|```/g, "").trim();
-  return JSON.parse(clean); // {transliteration, language}
 }
 
 /* ---------- component ---------------------------------------------- */
@@ -222,17 +192,12 @@ export default function CarnaticSongTracker() {
     let translit = form.transliteration.trim();
     let language = form.language.trim();
 
-    // Auto-transliterate when the name contains non-Latin script
-    // and no transliteration was typed manually.
+    // Auto-transliterate offline when the name contains non-Latin script
+    // and no transliteration was typed manually. No network, no API.
     if (!translit && /[^\u0000-\u024F]/.test(name)) {
-      try {
-        const r = await aiTransliterate(name);
-        translit = r.transliteration || "";
-        language = language || r.language || "";
-      } catch (e) {
-        console.error("Transliteration failed:", e);
-        notify("Transliteration is unavailable right now — you can fill it in later.");
-      }
+      const r = transliterate(name);
+      translit = r.transliteration || "";
+      language = language || r.language || "";
     }
 
     const candidate = {

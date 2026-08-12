@@ -2,7 +2,7 @@
 
 A cross-platform app that keeps a permanent record of every Carnatic song your son has learned. Add a song with nothing but its name (typed **or spoken**), fill in composer / raga / tala / guru later, link a lyrics PDF and an audio recording, and the app remembers everything.
 
-**Features:** voice input for the song name (editable if heard wrongly) · AI transliteration of Tamil/Telugu/Sanskrit/Kannada script into English letters (transliteration, not translation) · duplicate alert before adding · numbered searchable list · guru/composer/raga autocomplete · lyrics PDF viewing · inline audio player · persistent storage · JSON backup export.
+**Features:** voice input for the song name (editable if heard wrongly) · offline transliteration of Tamil/Telugu/Kannada/Malayalam/Sanskrit script into English letters (transliteration, not translation — no API, no network) · duplicate alert before adding · numbered searchable list · guru/composer/raga autocomplete · lyrics PDF viewing · inline audio player · persistent storage · JSON backup export.
 
 This repo is a Vite + React + Capacitor project: **one codebase → web, Android, and iOS.** The native speech-recognition plugin is already wired in — the app detects whether it's running in a browser (Web Speech API) or a native shell (`@capacitor-community/speech-recognition`) and uses the right one.
 
@@ -68,9 +68,9 @@ Set your signing team in Xcode, run on a device, then Archive → TestFlight →
 npm run sync       # rebuild web assets and copy into both native projects
 ```
 
-## Transliteration in native/hosted builds
+## Transliteration — fully offline
 
-Inside Claude, the Anthropic API call works directly. In a store or hosted build, you must route it through a small backend proxy that holds your API key — never embed the key in the app. Point `TRANSLIT_ENDPOINT` at your proxy (top of `src/App.jsx`). If you skip this, everything still works; you just type transliterations by hand.
+Transliteration is rule-based and runs entirely on-device (`src/translit.js`, zero dependencies). It detects the script (Tamil, Telugu, Kannada, Malayalam, Devanagari), maps syllables to conventional Carnatic romanization, and title-cases the result — no API key, no server, no cost, works in airplane mode. One known limit: Tamil writes k/g, t/d, and p/b with the same letter, so a name like கணபதிம் comes out "Kanapatim" — the field stays editable, so a one-letter fix gets you "Ganapatim".
 
 ## Storage
 

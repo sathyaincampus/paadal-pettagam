@@ -2,7 +2,7 @@
 
 ## Overview
 
-A single-file React application. All state lives in one component tree, persistence is a single JSON blob in key-value storage, and the only external service is the Anthropic API, used for one job: transliterating original-script song names into Latin letters.
+A single-file React application. All state lives in one component tree, persistence is a single JSON blob in key-value storage, and there are no external services at all — transliteration of original-script song names into Latin letters is done by a built-in, rule-based engine that runs entirely offline.
 
 ```
 ┌───────────────────────────────────────────────┐
@@ -15,9 +15,9 @@ A single-file React application. All state lives in one component tree, persiste
 │  Toast · Footer                               │
 └───────────┬──────────────────────┬────────────┘
             │                      │
-   window.storage           Anthropic API
-   (persistent KV,          (transliteration
-    one JSON blob)           via Claude)
+   window.storage           translit.js
+   (persistent KV,          (offline rule-based
+    one JSON blob)           transliteration)
 ```
 
 ## State
@@ -40,9 +40,9 @@ Derived values (`useMemo`): unique guru / composer / raga lists (feed the autoco
 - `loadSongs()` treats a missing key as an empty collection (first run).
 - Every mutation goes through `commit(next)`: set state, then persist; a failed persist surfaces a toast but never loses in-memory state.
 
-## Transliteration service
+## Transliteration engine (offline)
 
-`aiTransliterate(text)` sends the original-script name to Claude with a strict instruction: transliterate the *sounds* into conventional Carnatic romanization, do **not** translate the meaning, return minified JSON only (`{transliteration, language}`). The response is fence-stripped and parsed. It is called only when the name contains non-Latin characters **and** the user left the transliteration field blank — a manually typed transliteration always wins. Failure is non-fatal: the song saves anyway and the field can be edited later.
+`transliterate(text)` is a zero-dependency, rule-based syllable mapper. It detects the script by Unicode range (Tamil, Telugu, Kannada, Malayalam, Devanagari), then walks the text applying the abugida structure: consonant + optional matra (vowel sign) or virama (vowel killer), otherwise the inherent "a"; independent vowels and signs (anusvara, visarga, Malayalam chillus) map directly. Anusvara assimilates to "n" before dentals/palatals ("Endaro", not "Emdaro"). Long vowels collapse to the conventional Carnatic style ("Vatapi", not "Vaataapi") and the result is title-cased. It runs only when the name contains non-Latin characters **and** the transliteration field is blank — a manually typed value always wins. Known limit: Tamil's shared letters for k/g, t/d, p/b can't be disambiguated by rule, so the field stays editable.
 
 ## Duplicate detection
 
@@ -56,13 +56,13 @@ Derived values (`useMemo`): unique guru / composer / raga lists (feed the autoco
 sequenceDiagram
     actor U as User
     participant UI as App UI
-    participant T as Claude API
+    participant T as translit.js (offline)
     participant S as window.storage
 
     U->>UI: Type song name (Tamil script), tap "Save song"
     UI->>UI: Validate: name is required
     alt Name is non-Latin and transliteration blank
-        UI->>T: POST /v1/messages (transliterate, JSON-only)
+        UI->>T: transliterate(name) — local, synchronous
         T-->>UI: {transliteration, language}
     else Manual transliteration provided
         UI->>UI: Use the typed value
