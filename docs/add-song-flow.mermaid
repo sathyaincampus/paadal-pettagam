@@ -1,0 +1,26 @@
+sequenceDiagram
+    actor U as User
+    participant UI as App UI
+    participant T as Claude API (transliteration)
+    participant S as Persistent storage
+
+    U->>UI: Enter song name (any script), tap Save
+    UI->>UI: Validate name (only required field)
+    alt Non-Latin script, transliteration blank
+        UI->>T: Transliterate to Latin letters (not translate)
+        T-->>UI: {transliteration, language}
+    end
+    UI->>UI: Normalize + compare with existing songs
+    alt Duplicate suspected
+        UI-->>U: Alert: "This song may already exist" (matches listed)
+        alt Don't add
+            U->>UI: Cancel — nothing saved
+        else Add anyway
+            U->>UI: Confirm
+            UI->>S: Save full collection
+            UI-->>U: "Added — song #N in the book."
+        end
+    else No duplicate
+        UI->>S: Save full collection
+        UI-->>U: "Added — song #N in the book."
+    end

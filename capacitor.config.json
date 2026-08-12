@@ -1,0 +1,8 @@
+{
+  "appId": "com.sathya.paadalpettagam",
+  "appName": "Paadal Pettagam",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}
