@@ -15,10 +15,10 @@
 /* ------------------------------------------------------------------ */
 
 export const FIREBASE_CONFIG = {
-  apiKey: "PASTE_YOUR_CONFIG_HERE",
-  authDomain: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: "",
+  apiKey: "AIzaSyDN-haEuDKUOTxIt_oAuSOUUTKxd6PAgx4",
+  authDomain: "paadal-pettagam.firebaseapp.com",
+  projectId: "paadal-pettagam",
+  storageBucket: "paadal-pettagam.firebasestorage.app",
+  messagingSenderId: "915713376122",
+  appId: "1:915713376122:web:1d4da2663b9e54f031a0c3",
 };
