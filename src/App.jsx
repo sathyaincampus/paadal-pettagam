@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import * as XLSX from "xlsx";
 import { SpeechRecognition } from "@capacitor-community/speech-recognition";
 import { transliterate } from "./translit.js";
 import {
@@ -353,6 +354,43 @@ export default function CarnaticSongTracker() {
     URL.revokeObjectURL(url);
   }
 
+  function exportExcel() {
+    const rows = songs.map((s, i) => ({
+      "#": i + 1,
+      "Song (original)": s.name,
+      "Transliteration": s.transliteration || "",
+      "Language": s.language || "",
+      "Composer": s.composer || "",
+      "Raga": s.raga || "",
+      "Tala": s.tala || "",
+      "Guru": s.guru || "",
+      "Lyrics PDF": s.lyricsUrl || "",
+      "Audio": s.audioUrl || "",
+      "Notes": s.notes || "",
+      "Date added": s.dateAdded
+        ? new Date(s.dateAdded).toLocaleDateString()
+        : "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [
+      { wch: 4 },  // #
+      { wch: 28 }, // original
+      { wch: 26 }, // transliteration
+      { wch: 10 }, // language
+      { wch: 22 }, // composer
+      { wch: 14 }, // raga
+      { wch: 10 }, // tala
+      { wch: 20 }, // guru
+      { wch: 30 }, // lyrics
+      { wch: 30 }, // audio
+      { wch: 30 }, // notes
+      { wch: 12 }, // date
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Songs");
+    XLSX.writeFile(wb, "carnatic-songs.xlsx");
+  }
+
   /* ----- voice input for the song name ----- */
 
   const VOICE_LANGS = [
@@ -506,9 +544,14 @@ export default function CarnaticSongTracker() {
           + Add a song
         </button>
         {songs.length > 0 && (
-          <button className="pp-btn pp-btn-ghost" onClick={exportJson}>
-            Export backup
-          </button>
+          <>
+            <button className="pp-btn pp-btn-ghost" onClick={exportExcel}>
+              Export Excel
+            </button>
+            <button className="pp-btn pp-btn-ghost" onClick={exportJson}>
+              Export JSON
+            </button>
+          </>
         )}
       </section>
 
