@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
 import { SpeechRecognition } from "@capacitor-community/speech-recognition";
 import { transliterate } from "./translit.js";
+import { lookupRaga } from "./raga-db.js";
 import {
   SYNC_AVAILABLE,
   startSync,
@@ -50,6 +51,8 @@ const EMPTY_FORM = {
   language: "",
   composer: "",
   raga: "",
+  arohanam: "",
+  avarohanam: "",
   tala: "",
   guru: "",
   lyricsUrl: "",
@@ -260,12 +263,18 @@ export default function CarnaticSongTracker() {
   /* ----- form handling ----- */
 
   function openAdd() {
+    autoTranslitRef.current = "";
+    autoLangRef.current = "";
+    autoRagaRef.current = { a: "", av: "" };
     setForm(EMPTY_FORM);
     setEditingId(null);
     setPanel("add");
   }
 
   function openEdit(song) {
+    autoTranslitRef.current = "";
+    autoLangRef.current = "";
+    autoRagaRef.current = { a: "", av: "" };
     setForm({ ...EMPTY_FORM, ...song });
     setEditingId(song.id);
     setPanel("edit");
@@ -274,6 +283,47 @@ export default function CarnaticSongTracker() {
 
   function setF(k, v) {
     setForm((f) => ({ ...f, [k]: v }));
+  }
+
+  const autoTranslitRef = useRef("");
+  const autoLangRef = useRef("");
+  const autoRagaRef = useRef({ a: "", av: "" });
+
+  // Live transliteration: fills in as you type (or speak) the name.
+  // A manually edited transliteration is never overwritten.
+  function handleNameChange(v) {
+    setForm((f) => {
+      const next = { ...f, name: v };
+      if (/[^\u0000-\u024F]/.test(v)) {
+        const r = transliterate(v);
+        if (!f.transliteration || f.transliteration === autoTranslitRef.current) {
+          next.transliteration = r.transliteration;
+          autoTranslitRef.current = r.transliteration;
+          if (!f.language || f.language === autoLangRef.current) {
+            next.language = r.language;
+            autoLangRef.current = r.language;
+          }
+        }
+      }
+      return next;
+    });
+  }
+
+  // Auto-fill arohanam/avarohanam from the built-in raga database.
+  // Manual edits are never overwritten.
+  function handleRagaChange(v) {
+    setForm((f) => {
+      const next = { ...f, raga: v };
+      const hit = lookupRaga(v);
+      if (hit) {
+        if (!f.arohanam || f.arohanam === autoRagaRef.current.a)
+          next.arohanam = hit.arohanam;
+        if (!f.avarohanam || f.avarohanam === autoRagaRef.current.av)
+          next.avarohanam = hit.avarohanam;
+        autoRagaRef.current = { a: hit.arohanam, av: hit.avarohanam };
+      }
+      return next;
+    });
   }
 
   async function submitForm() {
@@ -362,6 +412,8 @@ export default function CarnaticSongTracker() {
       "Language": s.language || "",
       "Composer": s.composer || "",
       "Raga": s.raga || "",
+      "Arohanam": s.arohanam || "",
+      "Avarohanam": s.avarohanam || "",
       "Tala": s.tala || "",
       "Guru": s.guru || "",
       "Lyrics PDF": s.lyricsUrl || "",
@@ -379,6 +431,8 @@ export default function CarnaticSongTracker() {
       { wch: 10 }, // language
       { wch: 22 }, // composer
       { wch: 14 }, // raga
+      { wch: 22 }, // arohanam
+      { wch: 24 }, // avarohanam
       { wch: 10 }, // tala
       { wch: 20 }, // guru
       { wch: 30 }, // lyrics
@@ -435,7 +489,7 @@ export default function CarnaticSongTracker() {
       const heard = result?.matches?.[0] || "";
       if (heard) {
         // Fill the normal name field — fully editable if it was heard wrongly.
-        setF("name", heard.trim());
+        handleNameChange(heard.trim());
         notify("Heard it — check the name and edit if it's not quite right.");
       } else {
         notify("Couldn't hear that — try again closer to the mic, or type it.");
@@ -471,7 +525,7 @@ export default function CarnaticSongTracker() {
       const heard = e.results?.[0]?.[0]?.transcript || "";
       if (heard) {
         // Fill the normal name field — fully editable if it was heard wrongly.
-        setF("name", heard.trim());
+        handleNameChange(heard.trim());
         notify("Heard it — check the name and edit if it's not quite right.");
       }
     };
@@ -479,8 +533,10 @@ export default function CarnaticSongTracker() {
       setListening(false);
       if (e.error === "not-allowed") {
         notify("Microphone permission was denied — allow it to use voice input.");
+      } else if (e.error === "no-speech") {
+        notify("Didn't catch anything — tap the mic and try again.");
       } else if (e.error !== "aborted") {
-        notify("Couldn't hear that — try again closer to the mic, or type it.");
+        notify(`Mic error: ${e.error || "unknown"}. Check the site's microphone permission, or type the name.`);
       }
     };
     recog.onend = () => setListening(false);
@@ -599,7 +655,7 @@ export default function CarnaticSongTracker() {
               <div className="pp-voice-row">
                 <input
                   value={form.name}
-                  onChange={(e) => setF("name", e.target.value)}
+                  onChange={(e) => handleNameChange(e.target.value)}
                   placeholder="வாதாபி கணபதிம் / Vatapi Ganapatim"
                   autoFocus
                 />
@@ -663,7 +719,7 @@ export default function CarnaticSongTracker() {
               <input
                 list="pp-ragas"
                 value={form.raga}
-                onChange={(e) => setF("raga", e.target.value)}
+                onChange={(e) => handleRagaChange(e.target.value)}
                 placeholder="Hamsadhwani…"
               />
               <datalist id="pp-ragas">
@@ -678,6 +734,24 @@ export default function CarnaticSongTracker() {
                 value={form.tala}
                 onChange={(e) => setF("tala", e.target.value)}
                 placeholder="Adi…"
+              />
+            </label>
+            <label className="pp-field">
+              <span>Arohanam — auto-fills from the raga</span>
+              <input
+                className="pp-swara"
+                value={form.arohanam}
+                onChange={(e) => setF("arohanam", e.target.value)}
+                placeholder="S R2 G3 P D2 S"
+              />
+            </label>
+            <label className="pp-field">
+              <span>Avarohanam</span>
+              <input
+                className="pp-swara"
+                value={form.avarohanam}
+                onChange={(e) => setF("avarohanam", e.target.value)}
+                placeholder="S D2 P G3 R2 S"
               />
             </label>
             <label className="pp-field pp-span2">
@@ -830,6 +904,8 @@ export default function CarnaticSongTracker() {
                     <dl className="pp-facts">
                       {s.language && (<><dt>Language</dt><dd>{s.language}</dd></>)}
                       {s.tala && (<><dt>Tala</dt><dd>{s.tala}</dd></>)}
+                      {s.arohanam && (<><dt>Arohanam</dt><dd className="pp-swara-dd">{s.arohanam}</dd></>)}
+                      {s.avarohanam && (<><dt>Avarohanam</dt><dd className="pp-swara-dd">{s.avarohanam}</dd></>)}
                       {s.dateAdded && (
                         <>
                           <dt>Added</dt>
@@ -1045,12 +1121,17 @@ const css = `
 .pp-badges { flex: 0 0 auto; font-size: 15px; display: flex; gap: 4px; padding-top: 4px; }
 .pp-card-body { border-top: 1px dashed var(--line); padding: 13px 14px 15px; }
 .pp-facts {
-  display: grid; grid-template-columns: 84px 1fr; gap: 3px 10px;
+  display: grid; grid-template-columns: 96px 1fr; gap: 3px 10px;
   font-size: 13.5px; margin: 0 0 10px;
 }
 .pp-facts dt { color: #7A5A42; font-weight: 600; }
 .pp-facts dd { margin: 0; overflow-wrap: anywhere; }
 .pp-audio { margin: 6px 0 10px; }
+.pp-swara, .pp-swara-dd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: .04em;
+}
+.pp-swara-dd { font-size: 12.5px; color: var(--teal); }
 .pp-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .pp-card-actions a { text-decoration: none; display: inline-block; }
 .pp-toast {

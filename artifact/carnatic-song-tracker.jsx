@@ -20,6 +20,8 @@ const EMPTY_FORM = {
   language: "",
   composer: "",
   raga: "",
+  arohanam: "",
+  avarohanam: "",
   tala: "",
   guru: "",
   lyricsUrl: "",
@@ -193,6 +195,129 @@ function transliterate(text) {
   return { transliteration: titleCase(raw), language };
 }
 
+/* ------------------------------------------------------------------ */
+/*  raga-db.js — offline Carnatic raga database                       */
+/*  All 72 melakarta ragas (generated from the chakra scheme) plus    */
+/*  common janya ragas, with arohanam/avarohanam in swara notation    */
+/*  (S R1 R2 G1..G3 M1 M2 P D1..D3 N1..N3). Zero dependencies.        */
+/* ------------------------------------------------------------------ */
+
+const MELAKARTA_NAMES = [
+  "Kanakangi", "Ratnangi", "Ganamurti", "Vanaspati", "Manavati", "Tanarupi",
+  "Senavati", "Hanumatodi", "Dhenuka", "Natakapriya", "Kokilapriya", "Rupavati",
+  "Gayakapriya", "Vakulabharanam", "Mayamalavagowla", "Chakravakam", "Suryakantam", "Hatakambari",
+  "Jhankaradhwani", "Natabhairavi", "Keeravani", "Kharaharapriya", "Gourimanohari", "Varunapriya",
+  "Mararanjani", "Charukesi", "Sarasangi", "Harikambhoji", "Dheerasankarabharanam", "Naganandini",
+  "Yagapriya", "Ragavardhini", "Gangeyabhushani", "Vagadheeswari", "Shulini", "Chalanata",
+  "Salagam", "Jalarnavam", "Jhalavarali", "Navaneetam", "Pavani", "Raghupriya",
+  "Gavambodhi", "Bhavapriya", "Shubhapantuvarali", "Shadvidamargini", "Suvarnangi", "Divyamani",
+  "Dhavalambari", "Namanarayani", "Kamavardhini", "Ramapriya", "Gamanashrama", "Vishwambari",
+  "Shamalangi", "Shanmukhapriya", "Simhendramadhyamam", "Hemavati", "Dharmavati", "Neetimati",
+  "Kantamani", "Rishabhapriya", "Latangi", "Vachaspati", "Mechakalyani", "Chitrambari",
+  "Sucharitra", "Jyotiswarupini", "Dhatuvardhani", "Nasikabhushani", "Kosalam", "Rasikapriya",
+];
+
+const RG = [["R1","G1"],["R1","G2"],["R1","G3"],["R2","G2"],["R2","G3"],["R3","G3"]];
+const DN = [["D1","N1"],["D1","N2"],["D1","N3"],["D2","N2"],["D2","N3"],["D3","N3"]];
+
+const DB = {};
+
+function norm(s) {
+  return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+}
+
+// Generate all 72 melakartas
+MELAKARTA_NAMES.forEach((name, i) => {
+  const m = i < 36 ? "M1" : "M2";
+  const [r, g] = RG[Math.floor((i % 36) / 6)];
+  const [d, n] = DN[i % 6];
+  DB[norm(name)] = {
+    name,
+    mela: i + 1,
+    arohanam: `S ${r} ${g} ${m} P ${d} ${n} S`,
+    avarohanam: `S ${n} ${d} P ${m} ${g} ${r} S`,
+  };
+});
+
+// Common janya (and popularly-known) ragas
+const JANYA = {
+  "Mohanam":          ["S R2 G3 P D2 S",        "S D2 P G3 R2 S"],
+  "Hamsadhwani":      ["S R2 G3 P N3 S",        "S N3 P G3 R2 S"],
+  "Hindolam":         ["S G2 M1 D1 N2 S",       "S N2 D1 M1 G2 S"],
+  "Abhogi":           ["S R2 G2 M1 D2 S",       "S D2 M1 G2 R2 S"],
+  "Sriranjani":       ["S R2 G2 M1 D2 N2 S",    "S N2 D2 M1 G2 R2 S"],
+  "Shuddha Saveri":   ["S R2 M1 P D2 S",        "S D2 P M1 R2 S"],
+  "Madhyamavati":     ["S R2 M1 P N2 S",        "S N2 P M1 R2 S"],
+  "Bilahari":         ["S R2 G3 P D2 S",        "S N3 D2 P M1 G3 R2 S"],
+  "Kambhoji":         ["S R2 G3 M1 P D2 S",     "S N2 D2 P M1 G3 R2 S"],
+  "Arabhi":           ["S R2 M1 P D2 S",        "S N3 D2 P M1 G3 R2 S"],
+  "Saveri":           ["S R1 M1 P D1 S",        "S N3 D1 P M1 G3 R1 S"],
+  "Bhairavi":         ["S R2 G2 M1 P D2 N2 S",  "S N2 D1 P M1 G2 R2 S"],
+  "Khamas":           ["S M1 G3 M1 P D2 N2 S",  "S N2 D2 P M1 G3 S"],
+  "Valaji":           ["S G3 P D2 N2 S",        "S N2 D2 P G3 S"],
+  "Revati":           ["S R1 M1 P N2 S",        "S N2 P M1 R1 S"],
+  "Amritavarshini":   ["S G3 M2 P N3 S",        "S N3 P M2 G3 S"],
+  "Bahudari":         ["S G3 M1 P D2 N2 S",     "S N2 P M1 G3 S"],
+  "Nalinakanti":      ["S G3 R2 M1 P N3 S",     "S N3 P M1 G3 R2 S"],
+  "Sri":              ["S R2 M1 P N2 S",        "S N2 P D2 N2 P M1 R2 G2 R2 S"],
+  "Anandabhairavi":   ["S G2 R2 G2 M1 P D2 P S","S N2 D2 P M1 G2 R2 S"],
+  "Mohana Kalyani":   ["S R2 G3 P D2 S",        "S N3 D2 P M2 G3 R2 S"],
+  "Shuddha Dhanyasi": ["S G2 M1 P N2 S",        "S N2 P M1 G2 S"],
+  "Malahari":         ["S R1 M1 P D1 S",        "S D1 P M1 G3 R1 S"],
+  "Bauli":            ["S R1 G3 P D1 S",        "S N3 D1 P G3 R1 S"],
+  "Nata":             ["S R3 G3 M1 P D3 N3 S",  "S N3 P M1 R3 S"],
+  "Gambhira Nata":    ["S G3 M1 P N3 S",        "S N3 P M1 G3 S"],
+  "Bhupalam":         ["S R1 G2 P D1 S",        "S D1 P G2 R1 S"],
+};
+
+for (const [name, [aro, ava]] of Object.entries(JANYA)) {
+  DB[norm(name)] = { name, arohanam: aro, avarohanam: ava };
+}
+
+// Popular alternate names / spellings → canonical entry
+const ALIASES = {
+  kalyani: "Mechakalyani",
+  sankarabharanam: "Dheerasankarabharanam",
+  shankarabharanam: "Dheerasankarabharanam",
+  todi: "Hanumatodi",
+  thodi: "Hanumatodi",
+  pantuvarali: "Kamavardhini",
+  mayamalavagoula: "Mayamalavagowla",
+  mayamalavagaula: "Mayamalavagowla",
+  kiravani: "Keeravani",
+  keervani: "Keeravani",
+  kirvani: "Keeravani",
+  harikamboji: "Harikambhoji",
+  kamboji: "Kambhoji",
+  mohana: "Mohanam",
+  hamsadhvani: "Hamsadhwani",
+  hamsadwani: "Hamsadhwani",
+  hindola: "Hindolam",
+  sriragam: "Sri",
+  shree: "Sri",
+  shreeragam: "Sri",
+  suddhasaveri: "Shuddha Saveri",
+  suddhadhanyasi: "Shuddha Dhanyasi",
+  udayaravichandrika: "Shuddha Dhanyasi",
+  shanmugapriya: "Shanmukhapriya",
+  simhendramadhyama: "Simhendramadhyamam",
+  chalanattai: "Chalanata",
+  natai: "Nata",
+  nattai: "Nata",
+};
+
+for (const [alias, canonical] of Object.entries(ALIASES)) {
+  if (DB[norm(canonical)]) DB[alias] = DB[norm(canonical)];
+}
+
+/**
+ * Look up a raga by name (any common spelling).
+ * Returns { name, arohanam, avarohanam, mela? } or null.
+ */
+function lookupRaga(name) {
+  return DB[norm(name)] || null;
+}
+
 /* ---------- component ---------------------------------------------- */
 
 export default function CarnaticSongTracker() {
@@ -270,12 +395,18 @@ export default function CarnaticSongTracker() {
   /* ----- form handling ----- */
 
   function openAdd() {
+    autoTranslitRef.current = "";
+    autoLangRef.current = "";
+    autoRagaRef.current = { a: "", av: "" };
     setForm(EMPTY_FORM);
     setEditingId(null);
     setPanel("add");
   }
 
   function openEdit(song) {
+    autoTranslitRef.current = "";
+    autoLangRef.current = "";
+    autoRagaRef.current = { a: "", av: "" };
     setForm({ ...EMPTY_FORM, ...song });
     setEditingId(song.id);
     setPanel("edit");
@@ -284,6 +415,47 @@ export default function CarnaticSongTracker() {
 
   function setF(k, v) {
     setForm((f) => ({ ...f, [k]: v }));
+  }
+
+  const autoTranslitRef = useRef("");
+  const autoLangRef = useRef("");
+  const autoRagaRef = useRef({ a: "", av: "" });
+
+  // Live transliteration: fills in as you type (or speak) the name.
+  // A manually edited transliteration is never overwritten.
+  function handleNameChange(v) {
+    setForm((f) => {
+      const next = { ...f, name: v };
+      if (/[^\u0000-\u024F]/.test(v)) {
+        const r = transliterate(v);
+        if (!f.transliteration || f.transliteration === autoTranslitRef.current) {
+          next.transliteration = r.transliteration;
+          autoTranslitRef.current = r.transliteration;
+          if (!f.language || f.language === autoLangRef.current) {
+            next.language = r.language;
+            autoLangRef.current = r.language;
+          }
+        }
+      }
+      return next;
+    });
+  }
+
+  // Auto-fill arohanam/avarohanam from the built-in raga database.
+  // Manual edits are never overwritten.
+  function handleRagaChange(v) {
+    setForm((f) => {
+      const next = { ...f, raga: v };
+      const hit = lookupRaga(v);
+      if (hit) {
+        if (!f.arohanam || f.arohanam === autoRagaRef.current.a)
+          next.arohanam = hit.arohanam;
+        if (!f.avarohanam || f.avarohanam === autoRagaRef.current.av)
+          next.avarohanam = hit.avarohanam;
+        autoRagaRef.current = { a: hit.arohanam, av: hit.avarohanam };
+      }
+      return next;
+    });
   }
 
   async function submitForm() {
@@ -372,6 +544,8 @@ export default function CarnaticSongTracker() {
       "Language": s.language || "",
       "Composer": s.composer || "",
       "Raga": s.raga || "",
+      "Arohanam": s.arohanam || "",
+      "Avarohanam": s.avarohanam || "",
       "Tala": s.tala || "",
       "Guru": s.guru || "",
       "Lyrics PDF": s.lyricsUrl || "",
@@ -389,6 +563,8 @@ export default function CarnaticSongTracker() {
       { wch: 10 }, // language
       { wch: 22 }, // composer
       { wch: 14 }, // raga
+      { wch: 22 }, // arohanam
+      { wch: 24 }, // avarohanam
       { wch: 10 }, // tala
       { wch: 20 }, // guru
       { wch: 30 }, // lyrics
@@ -438,7 +614,7 @@ export default function CarnaticSongTracker() {
       const heard = e.results?.[0]?.[0]?.transcript || "";
       if (heard) {
         // Fill the normal name field — fully editable if it was heard wrongly.
-        setF("name", heard.trim());
+        handleNameChange(heard.trim());
         notify("Heard it — check the name and edit if it's not quite right.");
       }
     };
@@ -446,8 +622,10 @@ export default function CarnaticSongTracker() {
       setListening(false);
       if (e.error === "not-allowed") {
         notify("Microphone permission was denied — allow it to use voice input.");
+      } else if (e.error === "no-speech") {
+        notify("Didn't catch anything — tap the mic and try again.");
       } else if (e.error !== "aborted") {
-        notify("Couldn't hear that — try again closer to the mic, or type it.");
+        notify(`Mic error: ${e.error || "unknown"}. Check the site's microphone permission, or type the name.`);
       }
     };
     recog.onend = () => setListening(false);
@@ -534,7 +712,7 @@ export default function CarnaticSongTracker() {
               <div className="pp-voice-row">
                 <input
                   value={form.name}
-                  onChange={(e) => setF("name", e.target.value)}
+                  onChange={(e) => handleNameChange(e.target.value)}
                   placeholder="வாதாபி கணபதிம் / Vatapi Ganapatim"
                   autoFocus
                 />
@@ -598,7 +776,7 @@ export default function CarnaticSongTracker() {
               <input
                 list="pp-ragas"
                 value={form.raga}
-                onChange={(e) => setF("raga", e.target.value)}
+                onChange={(e) => handleRagaChange(e.target.value)}
                 placeholder="Hamsadhwani…"
               />
               <datalist id="pp-ragas">
@@ -613,6 +791,24 @@ export default function CarnaticSongTracker() {
                 value={form.tala}
                 onChange={(e) => setF("tala", e.target.value)}
                 placeholder="Adi…"
+              />
+            </label>
+            <label className="pp-field">
+              <span>Arohanam — auto-fills from the raga</span>
+              <input
+                className="pp-swara"
+                value={form.arohanam}
+                onChange={(e) => setF("arohanam", e.target.value)}
+                placeholder="S R2 G3 P D2 S"
+              />
+            </label>
+            <label className="pp-field">
+              <span>Avarohanam</span>
+              <input
+                className="pp-swara"
+                value={form.avarohanam}
+                onChange={(e) => setF("avarohanam", e.target.value)}
+                placeholder="S D2 P G3 R2 S"
               />
             </label>
             <label className="pp-field pp-span2">
@@ -765,6 +961,8 @@ export default function CarnaticSongTracker() {
                     <dl className="pp-facts">
                       {s.language && (<><dt>Language</dt><dd>{s.language}</dd></>)}
                       {s.tala && (<><dt>Tala</dt><dd>{s.tala}</dd></>)}
+                      {s.arohanam && (<><dt>Arohanam</dt><dd className="pp-swara-dd">{s.arohanam}</dd></>)}
+                      {s.avarohanam && (<><dt>Avarohanam</dt><dd className="pp-swara-dd">{s.avarohanam}</dd></>)}
                       {s.dateAdded && (
                         <>
                           <dt>Added</dt>
@@ -967,12 +1165,17 @@ const css = `
 .pp-badges { flex: 0 0 auto; font-size: 15px; display: flex; gap: 4px; padding-top: 4px; }
 .pp-card-body { border-top: 1px dashed var(--line); padding: 13px 14px 15px; }
 .pp-facts {
-  display: grid; grid-template-columns: 84px 1fr; gap: 3px 10px;
+  display: grid; grid-template-columns: 96px 1fr; gap: 3px 10px;
   font-size: 13.5px; margin: 0 0 10px;
 }
 .pp-facts dt { color: #7A5A42; font-weight: 600; }
 .pp-facts dd { margin: 0; overflow-wrap: anywhere; }
 .pp-audio { margin: 6px 0 10px; }
+.pp-swara, .pp-swara-dd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: .04em;
+}
+.pp-swara-dd { font-size: 12.5px; color: var(--teal); }
 .pp-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .pp-card-actions a { text-decoration: none; display: inline-block; }
 .pp-toast {
