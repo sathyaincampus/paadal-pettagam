@@ -535,6 +535,18 @@ export default function CarnaticSongTracker() {
         notify("Microphone permission was denied — allow it to use voice input.");
       } else if (e.error === "no-speech") {
         notify("Didn't catch anything — tap the mic and try again.");
+      } else if (
+        (e.error === "service-not-allowed" || e.error === "not-allowed") &&
+        /iPad|iPhone|iPod/.test(navigator.userAgent) &&
+        !/Safari/.test(navigator.userAgent.replace(/CriOS|FxiOS|EdgiOS|GSA/g, ""))
+      ) {
+        notify(
+          "On iPhone, this mic works only in Safari. Open this site in Safari — or tap the mic on your keyboard (dictation) to speak straight into the field."
+        );
+      } else if (e.error === "service-not-allowed") {
+        notify(
+          "Speech service is blocked here. On iPhone use Safari or the keyboard's dictation mic; on Android use Chrome."
+        );
       } else if (e.error !== "aborted") {
         notify(`Mic error: ${e.error || "unknown"}. Check the site's microphone permission, or type the name.`);
       }
