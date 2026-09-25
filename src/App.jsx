@@ -9,6 +9,12 @@ import {
   pushSongs,
   fetchSongsOnce,
   normalizeFamilyCode,
+  watchAuth,
+  googleSignIn,
+  googleSignOut,
+  checkRedirectResult,
+  getSavedFamilyCode,
+  saveFamilyCode,
 } from "./sync.js";
 
 /* Running inside a Capacitor native shell (Android / iOS)? */
@@ -130,6 +136,7 @@ export default function CarnaticSongTracker() {
   const [codeInput, setCodeInput] = useState("");
   const [syncState, setSyncState] = useState("off"); // off|connecting|live|error
   const [syncDismissed, setSyncDismissed] = useState(false);
+  const [gUser, setGUser] = useState(null);
   const unsubRef = useRef(null);
   const [listening, setListening] = useState(false);
   const [voiceLang, setVoiceLang] = useState("ta-IN");
@@ -166,6 +173,16 @@ export default function CarnaticSongTracker() {
       unsubRef.current?.();
     };
   }, [familyCode]);
+
+  useEffect(() => {
+    if (!SYNC_AVAILABLE) return;
+    const un = watchAuth(setGUser);
+    checkRedirectResult().then((u) => {
+      if (u) afterGoogleSignIn(u);
+    });
+    return un;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function notify(msg) {
     setToast(msg);
@@ -445,6 +462,143 @@ export default function CarnaticSongTracker() {
     XLSX.writeFile(wb, "carnatic-songs.xlsx");
   }
 
+  /* ----- Google sign-in: identity that remembers your family code ----- */
+
+  async function afterGoogleSignIn(u) {
+    try {
+      let code = await getSavedFamilyCode(u.uid);
+      if (!code && familyCode) {
+        // Device already synced by code — attach that code to this account.
+        code = familyCode;
+        await saveFamilyCode(u.uid, code);
+      }
+      if (!code) {
+        // Brand-new: mint a code and carry this device's songs into it.
+        code = "raga-" + Math.random().toString(36).slice(2, 10);
+        await saveFamilyCode(u.uid, code);
+      }
+      const remote = await fetchSongsOnce(code);
+      const merged = mergeSongs(songs, remote);
+      if (merged.length !== remote.length) await pushSongs(code, merged);
+      try {
+        localStorage.setItem("pp-family-code", code);
+      } catch {}
+      if (code !== familyCode) setFamilyCode(code);
+      notify(`Signed in as ${u.displayName || u.email} — synced.`);
+    } catch (e) {
+      console.error(e);
+      setSyncState("error");
+      notify("Signed in, but sync setup failed — check the Firestore rules in the README.");
+    }
+  }
+
+  async function handleGoogle() {
+    setSyncState("connecting");
+    try {
+      const u = await googleSignIn();
+      if (u) await afterGoogleSignIn(u);
+      else if (!familyCode) setSyncState("off");
+    } catch (e) {
+      console.error(e);
+      setSyncState(familyCode ? "live" : "off");
+      notify(`Google sign-in failed: ${e.code || e.message || "unknown error"}`);
+    }
+  }
+
+  async function handleSignOut() {
+    try {
+      await googleSignOut();
+    } catch {}
+    setGUser(null);
+    notify(
+      familyCode
+        ? "Signed out. This device stays synced by its family code."
+        : "Signed out."
+    );
+  }
+
+  /* ----- import songs from an exported Excel or JSON file ----- */
+
+  const IMPORT_HEADER_MAP = {
+    "Song (original)": "name",
+    "Transliteration": "transliteration",
+    "Language": "language",
+    "Composer": "composer",
+    "Raga": "raga",
+    "Arohanam": "arohanam",
+    "Avarohanam": "avarohanam",
+    "Tala": "tala",
+    "Guru": "guru",
+    "Lyrics PDF": "lyricsUrl",
+    "Audio": "audioUrl",
+    "Notes": "notes",
+  };
+
+  async function importFile(file) {
+    try {
+      let incoming = [];
+      if (/\.json$/i.test(file.name)) {
+        const arr = JSON.parse(await file.text());
+        if (!Array.isArray(arr)) throw new Error("JSON must be an array of songs");
+        incoming = arr;
+      } else {
+        const wb = XLSX.read(await file.arrayBuffer());
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {
+          defval: "",
+        });
+        incoming = rows.map((r) => {
+          const s = {};
+          for (const [header, key] of Object.entries(IMPORT_HEADER_MAP)) {
+            if (r[header] !== undefined) s[key] = String(r[header]).trim();
+          }
+          return s;
+        });
+      }
+
+      let added = 0;
+      let skipped = 0;
+      const next = [...songs];
+      const existingIds = new Set(songs.map((s) => s.id));
+      const existingNames = new Set(
+        songs.flatMap((s) =>
+          [normalize(s.name), normalize(s.transliteration)].filter(Boolean)
+        )
+      );
+      for (const raw of incoming) {
+        if (!raw || !(raw.name || "").trim()) continue;
+        const keys = [normalize(raw.name), normalize(raw.transliteration)].filter(
+          Boolean
+        );
+        if (
+          (raw.id && existingIds.has(raw.id)) ||
+          keys.some((k) => existingNames.has(k))
+        ) {
+          skipped++;
+          continue;
+        }
+        const song = {
+          ...EMPTY_FORM,
+          ...raw,
+          id: raw.id || `song-${Date.now()}-${added}`,
+          dateAdded: raw.dateAdded || new Date().toISOString(),
+        };
+        next.push(song);
+        keys.forEach((k) => existingNames.add(k));
+        existingIds.add(song.id);
+        added++;
+      }
+      await commit(next);
+      notify(
+        `Imported ${added} song${added === 1 ? "" : "s"}` +
+          (skipped ? `, skipped ${skipped} already-existing` : "") +
+          "."
+      );
+    } catch (e) {
+      console.error(e);
+      notify("Couldn't read that file — use an Excel or JSON exported from this app.");
+    }
+  }
+
   /* ----- voice input for the song name ----- */
 
   const VOICE_LANGS = [
@@ -611,6 +765,23 @@ export default function CarnaticSongTracker() {
         <button className="pp-btn pp-btn-primary" onClick={openAdd}>
           + Add a song
         </button>
+        <input
+          id="pp-import-file"
+          type="file"
+          accept=".json,.xlsx,.xls"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) importFile(f);
+            e.target.value = "";
+          }}
+        />
+        <button
+          className="pp-btn pp-btn-ghost"
+          onClick={() => document.getElementById("pp-import-file").click()}
+        >
+          Import
+        </button>
         {songs.length > 0 && (
           <>
             <button className="pp-btn pp-btn-ghost" onClick={exportExcel}>
@@ -632,6 +803,10 @@ export default function CarnaticSongTracker() {
             on every phone, tablet, and computer. Everyone sees the same song
             list, updated live.
           </p>
+          <button className="pp-btn pp-google" onClick={handleGoogle}>
+            Continue with Google
+          </button>
+          <div className="pp-sync-or">or use a family code</div>
           <div className="pp-sync-row">
             <input
               value={codeInput}
@@ -970,7 +1145,18 @@ export default function CarnaticSongTracker() {
       <footer className="pp-footer">
         {familyCode && syncState === "live" ? (
           <>
-            Synced across devices as "{familyCode}" ·{" "}
+            Synced as "{familyCode}"
+            {gUser ? ` · ${gUser.email}` : ""} ·{" "}
+            {gUser ? (
+              <button className="pp-linkbtn" onClick={handleSignOut}>
+                sign out
+              </button>
+            ) : (
+              <button className="pp-linkbtn" onClick={handleGoogle}>
+                back up with Google
+              </button>
+            )}{" "}
+            ·{" "}
             <button className="pp-linkbtn" onClick={disconnectFamily}>
               stop syncing on this device
             </button>
@@ -1168,6 +1354,13 @@ const css = `
 .pp-sync-row input {
   flex: 1 1 200px; padding: 10px 12px; border-radius: 9px;
   border: 1px solid #BFD6CF; background: #FFFFFF; font-size: 15px;
+}
+.pp-google {
+  width: 100%; background: #FFFFFF; color: #1F2937;
+  border: 1px solid #BFD6CF; margin-bottom: 2px;
+}
+.pp-sync-or {
+  text-align: center; font-size: 12px; color: #55706A; margin: 8px 0;
 }
 .pp-sync-skip {
   background: none; border: none; padding: 6px 0 0; cursor: pointer;

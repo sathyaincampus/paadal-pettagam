@@ -94,6 +94,9 @@ service cloud.firestore {
     match /families/{family} {
       allow read, write: if request.auth != null;
     }
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
   }
 }
 ```
@@ -101,6 +104,10 @@ service cloud.firestore {
 7. Rebuild and redeploy (`npm run build`, push `dist/` to `gh-pages`)
 
 On first open, the app asks each device for a **family code** — any secret phrase you invent. Every device that enters the same code shares the same live list: adds and edits appear on the other devices within a second, writes go through Firestore with last-write-wins, and each device keeps a localStorage copy as an offline cache. Treat the code like a password (that's what scopes your data). "Stop syncing on this device" in the footer returns a device to local-only.
+
+**Google sign-in (recommended backup):** enable the **Google** provider in Authentication → Sign-in method, and add your Pages domain (e.g. `sathyaincampus.github.io`) under Authentication → Settings → **Authorized domains**. "Continue with Google" then ties your family code to your Google account (`users/{uid}` doc): sign in on any new device and it reconnects to your songs automatically — no code to remember. Family code entry remains available for family members' devices.
+
+**Import/Export:** Export Excel / Export JSON produce full backups; the **Import** button reads either format back in, skipping songs that already exist (matched by id or normalized name), so re-importing a backup never creates duplicates.
 
 Until `firebase-config.js` is filled in, the app silently stays in device-only mode — nothing breaks.
 

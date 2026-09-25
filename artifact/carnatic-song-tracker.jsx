@@ -577,6 +577,88 @@ export default function CarnaticSongTracker() {
     XLSX.writeFile(wb, "carnatic-songs.xlsx");
   }
 
+  /* ----- import songs from an exported Excel or JSON file ----- */
+
+  const IMPORT_HEADER_MAP = {
+    "Song (original)": "name",
+    "Transliteration": "transliteration",
+    "Language": "language",
+    "Composer": "composer",
+    "Raga": "raga",
+    "Arohanam": "arohanam",
+    "Avarohanam": "avarohanam",
+    "Tala": "tala",
+    "Guru": "guru",
+    "Lyrics PDF": "lyricsUrl",
+    "Audio": "audioUrl",
+    "Notes": "notes",
+  };
+
+  async function importFile(file) {
+    try {
+      let incoming = [];
+      if (/\.json$/i.test(file.name)) {
+        const arr = JSON.parse(await file.text());
+        if (!Array.isArray(arr)) throw new Error("JSON must be an array of songs");
+        incoming = arr;
+      } else {
+        const wb = XLSX.read(await file.arrayBuffer());
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {
+          defval: "",
+        });
+        incoming = rows.map((r) => {
+          const s = {};
+          for (const [header, key] of Object.entries(IMPORT_HEADER_MAP)) {
+            if (r[header] !== undefined) s[key] = String(r[header]).trim();
+          }
+          return s;
+        });
+      }
+
+      let added = 0;
+      let skipped = 0;
+      const next = [...songs];
+      const existingIds = new Set(songs.map((s) => s.id));
+      const existingNames = new Set(
+        songs.flatMap((s) =>
+          [normalize(s.name), normalize(s.transliteration)].filter(Boolean)
+        )
+      );
+      for (const raw of incoming) {
+        if (!raw || !(raw.name || "").trim()) continue;
+        const keys = [normalize(raw.name), normalize(raw.transliteration)].filter(
+          Boolean
+        );
+        if (
+          (raw.id && existingIds.has(raw.id)) ||
+          keys.some((k) => existingNames.has(k))
+        ) {
+          skipped++;
+          continue;
+        }
+        const song = {
+          ...EMPTY_FORM,
+          ...raw,
+          id: raw.id || `song-${Date.now()}-${added}`,
+          dateAdded: raw.dateAdded || new Date().toISOString(),
+        };
+        next.push(song);
+        keys.forEach((k) => existingNames.add(k));
+        existingIds.add(song.id);
+        added++;
+      }
+      await commit(next);
+      notify(
+        `Imported ${added} song${added === 1 ? "" : "s"}` +
+          (skipped ? `, skipped ${skipped} already-existing` : "") +
+          "."
+      );
+    } catch (e) {
+      console.error(e);
+      notify("Couldn't read that file — use an Excel or JSON exported from this app.");
+    }
+  }
+
   /* ----- voice input for the song name ----- */
 
   const VOICE_LANGS = [
@@ -699,6 +781,23 @@ export default function CarnaticSongTracker() {
         />
         <button className="pp-btn pp-btn-primary" onClick={openAdd}>
           + Add a song
+        </button>
+        <input
+          id="pp-import-file"
+          type="file"
+          accept=".json,.xlsx,.xls"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) importFile(f);
+            e.target.value = "";
+          }}
+        />
+        <button
+          className="pp-btn pp-btn-ghost"
+          onClick={() => document.getElementById("pp-import-file").click()}
+        >
+          Import
         </button>
         {songs.length > 0 && (
           <>
